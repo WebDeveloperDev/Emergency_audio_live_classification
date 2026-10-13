@@ -1,0 +1,37 @@
+# Python virtual environments
+tf-env/
+.venv/
+venv/
+env/
+
+# Python bytecode and test/tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime output and generated audio
+*.log
+*.wav
+*.mp3
+*.ogg
+*.flac
+uploads/
+recordings/
+
+# Notebook and local tooling state
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini

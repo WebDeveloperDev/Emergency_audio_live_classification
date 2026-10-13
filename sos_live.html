@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Emergency Audio SOS - Live</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;max-width:720px;margin:40px auto;padding:12px}
+    h1{font-size:22px;margin-bottom:8px}
+    button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;font-size:15px}
+    #startBtn{background:#d32f2f;color:#fff;margin-right:8px}
+    #stopBtn{background:#555;color:#fff}
+    #stopBtn[disabled]{opacity:0.5;cursor:not-allowed}
+    #status{margin-top:14px;color:#444}
+    #log{margin-top:12px;background:#f4f4f4;border-radius:8px;padding:10px;white-space:pre-wrap;font-size:13px}
+    .label-badge{display:inline-block;padding:4px 10px;border-radius:999px;margin-top:10px;font-size:14px}
+    .label-distress{background:#ffebee;color:#c62828}
+    .label-normal{background:#e8f5e9;color:#2e7d32}
+    input[type=text]{width:100%;padding:8px;margin-bottom:10px;border-radius:6px;border:1px solid #ccc}
+  </style>
+</head>
+<body>
+  <h1>Emergency Audio SOS - Live Classification</h1>
+  <p>
+    Click <b>SOS</b> to start microphone streaming. Every ~1 second, a chunk of audio
+    is sent to the backend for classification.
+  </p>
+
+  <label>Server classify PCM URL</label>
+  <input id="serverUrl" type="text" value="/classify_pcm">
+
+  <div style="margin-top:10px;">
+    <button id="startBtn">SOS (Start)</button>
+    <button id="stopBtn" disabled>Stop</button>
+  </div>
+
+  <div id="status">Status: idle</div>
+  <div id="currentLabel"></div>
+  <div id="log"></div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const currentLabelEl = document.getElementById('currentLabel');
+    const serverUrlEl = document.getElementById('serverUrl');
+
+    let audioCtx = null;
+    let mediaStream = null;
+    let processor = null;
+    let pcmBuffer = [];
+    let sending = false;
+    let sendIntervalId = null;
+    let chunkSeconds = 1.0;  // classify every 1 second
+
+    function log(msg) {
+      logEl.textContent = msg + "\n" + logEl.textContent;
+    }
+
+    async function startSOS() {
+      const url = serverUrlEl.value.trim();
+      if (!url) {
+        alert("Please enter server URL");
+        return;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("getUserMedia not supported in this browser");
+        return;
+      }
+
+      try {
+        statusEl.textContent = "Status: requesting microphone permission...";
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(mediaStream);
+
+        // ScriptProcessorNode is deprecated but widely supported & simple
+        const bufferSize = 2048;
+        const numChannels = 1;
+        processor = audioCtx.createScriptProcessor(bufferSize, numChannels, numChannels);
+
+        processor.onaudioprocess = (event) => {
+          const input = event.inputBuffer.getChannelData(0); // Float32Array
+          // Append samples to buffer
+          pcmBuffer.push(...input);
+        };
+
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+
+        sending = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        statusEl.textContent = "Status: listening & streaming...";
+        log("SOS started, capturing audio at sampleRate=" + audioCtx.sampleRate);
+
+        const chunkSamples = Math.floor(audioCtx.sampleRate * chunkSeconds);
+
+        sendIntervalId = setInterval(async () => {
+          if (!sending) return;
+          if (pcmBuffer.length < chunkSamples) return;
+
+          const samples = pcmBuffer.slice(0, chunkSamples);
+          pcmBuffer = pcmBuffer.slice(chunkSamples);
+
+          try {
+            const resp = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sampleRate: audioCtx.sampleRate,
+                samples: samples
+              })
+            });
+
+            const text = await resp.text();
+            let data;
+            try {
+              data = JSON.parse(text);
+            } catch (e) {
+              log("Non-JSON response: " + text);
+              return;
+            }
+
+            if (data.error) {
+              log("Error from server: " + (data.message || data.error));
+              return;
+            }
+
+            const prob = data.probability;
+            const label = data.label;
+            const labelClass = label === "distress" ? "label-distress" : "label-normal";
+
+            currentLabelEl.innerHTML =
+              '<span class="label-badge ' + labelClass + '">' +
+              'Label: ' + label + ' | Prob: ' + prob.toFixed(4) +
+              '</span>';
+
+            log("Chunk classified: label=" + label + ", prob=" + prob.toFixed(4));
+          } catch (err) {
+            log("Request failed: " + err);
+          }
+        }, chunkSeconds * 1000);
+
+      } catch (err) {
+        console.error(err);
+        alert("Failed to start microphone: " + err.message);
+        statusEl.textContent = "Status: error starting microphone";
+      }
+    }
+
+    function stopSOS() {
+      sending = false;
+      if (sendIntervalId) clearInterval(sendIntervalId);
+      sendIntervalId = null;
+
+      if (processor) {
+        processor.disconnect();
+        processor.onaudioprocess = null;
+        processor = null;
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+      if (audioCtx) {
+        audioCtx.close();
+        audioCtx = null;
+      }
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusEl.textContent = "Status: stopped";
+      log("SOS stopped");
+    }
+
+    startBtn.addEventListener('click', startSOS);
+    stopBtn.addEventListener('click', stopSOS);
+  </script>
+</body>
+</html>

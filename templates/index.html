@@ -1,0 +1,780 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASP | Emergency Audio Detection</title>
+
+    <style>
+        :root {
+            font-family: Inter, system-ui, Arial, sans-serif;
+            color: #172033;
+            background: #f4f7fb;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 28px 16px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        header { margin-bottom: 26px; }
+
+        header h1 {
+            margin: 0 0 8px;
+            font-size: 30px;
+        }
+
+        header p, .muted {
+            color: #64748b;
+            line-height: 1.6;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 20px;
+            background: #e2e8f0;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #94a3b8;
+        }
+
+        .status.ready .dot { background: #16a34a; }
+        .status.live .dot { background: #dc2626; }
+        .status.error .dot { background: #ea580c; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 24px;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            box-shadow: 0 5px 20px #0f172a08;
+            margin-bottom: 20px;
+            min-width: 0;
+        }
+
+        .card h2 {
+            margin: 0 0 10px;
+            font-size: 20px;
+        }
+
+        button, .file-label {
+            display: inline-block;
+            padding: 11px 15px;
+            border: 0;
+            border-radius: 9px;
+            background: #1d4ed8;
+            color: white;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        button:hover, .file-label:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.secondary { background: #e2e8f0; color: #172033; }
+        button.danger { background: #b91c1c; }
+
+        input[type="file"] {
+            display: block;
+            width: 100%;
+            margin: 18px 0;
+            padding: 12px;
+            border: 1px dashed #94a3b8;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .result {
+            border-radius: 12px;
+            padding: 18px;
+            margin-top: 18px;
+            background: #f1f5f9;
+        }
+
+        .result.distress {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+        }
+
+        .result.normal {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+        }
+
+        .result h3 { margin: 0 0 8px; }
+
+        .probability {
+            font-size: 30px;
+            font-weight: 750;
+            margin: 10px 0;
+        }
+
+        .hidden { display: none !important; }
+
+        .meter {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+
+        .meter-fill {
+            height: 100%;
+            width: 0;
+            background: #16a34a;
+            transition: width 0.2s;
+        }
+
+        .distress .meter-fill { background: #dc2626; }
+
+        .table-wrap {
+            overflow-x: auto;
+            margin-top: 16px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            white-space: nowrap;
+        }
+
+        th, td {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        th {
+            color: #64748b;
+            background: #f8fafc;
+        }
+
+        .pill {
+            display: inline-block;
+            border-radius: 20px;
+            padding: 5px 9px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .pill.distress { color: #b91c1c; background: #fee2e2; }
+        .pill.normal { color: #166534; background: #dcfce7; }
+
+        .message {
+            margin-top: 14px;
+            color: #475569;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            font-size: 14px;
+        }
+
+        footer {
+            text-align: center;
+            color: #64748b;
+            font-size: 13px;
+            padding: 15px;
+        }
+
+        @media (max-width: 700px) {
+            .grid { grid-template-columns: 1fr; }
+            body { padding: 18px 12px; }
+            .card { padding: 18px; }
+        }
+    </style>
+</head>
+
+<body>
+<div class="container">
+
+    <header>
+        <h1>🛡️ WASP Audio Monitor</h1>
+        <p>
+            Local emergency audio classification using YAMNet
+            and your trained classifier.
+        </p>
+
+        <div id="serverStatus" class="status">
+            <span class="dot"></span>
+            <span id="serverStatusText">Checking local server...</span>
+        </div>
+    </header>
+
+    <div class="grid">
+
+        <!-- LIVE MICROPHONE -->
+        <section class="card">
+            <h2>🎙️ Live microphone</h2>
+            <p class="muted">
+                Allow microphone access to stream audio to the
+                local classifier. A new prediction is produced
+                every two seconds after the first six-second window.
+            </p>
+
+            <div class="actions">
+                <button id="startMic">Allow microphone & start</button>
+                <button id="stopMic" class="danger" disabled>
+                    Stop
+                </button>
+            </div>
+
+            <div id="micMessage" class="message">
+                Microphone is stopped.
+            </div>
+
+            <div id="liveResult" class="result hidden">
+                <h3 id="liveLabel">Waiting for audio...</h3>
+                <div class="probability" id="liveProbability">—</div>
+                <div id="liveTiming" class="muted"></div>
+
+                <div class="meter">
+                    <div id="liveMeter" class="meter-fill"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- AUDIO FILE TEST -->
+        <section class="card">
+            <h2>📁 Test an audio file</h2>
+            <p class="muted">
+                Upload a recording for analysis. The server
+                processes overlapping six-second windows with
+                a two-second hop.
+            </p>
+
+            <form id="uploadForm">
+                <input
+                    type="file"
+                    id="audioFile"
+                    name="audio"
+                    accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.webm"
+                    required
+                >
+
+                <button type="submit" id="analyzeButton">
+                    Analyze audio
+                </button>
+            </form>
+
+            <div id="uploadMessage" class="message"></div>
+
+            <div id="fileSummary" class="result hidden">
+                <h3 id="fileOverallLabel"></h3>
+                <div id="fileSummaryText" class="muted"></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- WINDOW-BY-WINDOW RESULTS -->
+    <section id="tableCard" class="card hidden">
+        <h2>📊 Window-by-window results</h2>
+        <p class="muted">
+            Each row represents one audio window. A distress
+            prediction indicates a possible distress sound,
+            not confirmation of an emergency.
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Window</th>
+                        <th>Start</th>
+                        <th>End</th>
+                        <th>Classification</th>
+                        <th>Distress probability</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <footer>
+        WASP • Local inference • Audio is processed by your server
+    </footer>
+
+</div>
+
+<script>
+    const $ = (id) => document.getElementById(id);
+
+    const statusEl = $("serverStatus");
+    const statusText = $("serverStatusText");
+
+    function setServerStatus(state, message) {
+        statusEl.className = "status " + state;
+        statusText.textContent = message;
+    }
+
+    async function checkServer() {
+        try {
+            const response = await fetch("/health");
+            const data = await response.json();
+
+            if (!response.ok || data.status !== "ready") {
+                throw new Error("Models are not ready.");
+            }
+
+            setServerStatus("ready", "Local server ready");
+        } catch (error) {
+            setServerStatus(
+                "error",
+                "Server unavailable — start server.py"
+            );
+        }
+    }
+
+    checkServer();
+
+
+    // ========================================================
+    // LIVE MICROPHONE STREAMING
+    // ========================================================
+
+    let audioContext = null;
+    let microphoneStream = null;
+    let microphoneSource = null;
+    let processor = null;
+    let silentGain = null;
+    let websocket = null;
+
+    let pendingAudio = [];
+    let pendingSamples = 0;
+
+    const TARGET_RATE = 16000;
+    const CHUNK_SECONDS = 2;
+    const TARGET_CHUNK_SAMPLES = TARGET_RATE * CHUNK_SECONDS;
+
+    let isStopping = false;
+
+    function floatToInt16(floatData) {
+        const pcm = new Int16Array(floatData.length);
+
+        for (let i = 0; i < floatData.length; i++) {
+            const sample = Math.max(-1, Math.min(1, floatData[i]));
+            pcm[i] = sample < 0
+                ? Math.round(sample * 32768)
+                : Math.round(sample * 32767);
+        }
+
+        return pcm;
+    }
+
+    // Linear resampling from the browser's actual sample rate
+    // to the 16 kHz format expected by the server.
+    function resampleTo16k(input, inputRate) {
+        if (inputRate === TARGET_RATE) {
+            return new Float32Array(input);
+        }
+
+        const outputLength = Math.round(
+            input.length * TARGET_RATE / inputRate
+        );
+
+        const output = new Float32Array(outputLength);
+        const ratio = inputRate / TARGET_RATE;
+
+        for (let i = 0; i < outputLength; i++) {
+            const position = i * ratio;
+            const left = Math.floor(position);
+            const right = Math.min(left + 1, input.length - 1);
+            const fraction = position - left;
+
+            output[i] =
+                input[left] * (1 - fraction) +
+                input[right] * fraction;
+        }
+
+        return output;
+    }
+
+    function appendAudioChunk(input) {
+        pendingAudio.push(new Float32Array(input));
+        pendingSamples += input.length;
+
+        // Split accumulated source audio into two-second chunks.
+        const requiredSourceSamples = Math.round(
+            audioContext.sampleRate * CHUNK_SECONDS
+        );
+
+        while (pendingSamples >= requiredSourceSamples) {
+            const combined = new Float32Array(pendingSamples);
+            let offset = 0;
+
+            for (const part of pendingAudio) {
+                combined.set(part, offset);
+                offset += part.length;
+            }
+
+            const currentChunk = combined.slice(
+                0, requiredSourceSamples
+            );
+
+            const remainder = combined.slice(
+                requiredSourceSamples
+            );
+
+            pendingAudio = remainder.length
+                ? [remainder]
+                : [];
+
+            pendingSamples = remainder.length;
+
+            if (
+                websocket &&
+                websocket.readyState === WebSocket.OPEN
+            ) {
+                const resampled = resampleTo16k(
+                    currentChunk,
+                    audioContext.sampleRate
+                );
+
+                const pcm = floatToInt16(resampled);
+
+                // Send raw binary PCM, not JSON.
+                websocket.send(pcm.buffer);
+            }
+        }
+    }
+
+    function showLiveResult(result) {
+        if (result.error) {
+            $("micMessage").textContent =
+                "Server error: " + result.error;
+            return;
+        }
+
+        const distress = result.label === "distress";
+        const probability = Number(result.probability);
+
+        $("liveResult").className =
+            "result " + (distress ? "distress" : "normal");
+
+        $("liveLabel").textContent = distress
+            ? "⚠️ Possible distress detected"
+            : "✅ Normal audio";
+
+        $("liveProbability").textContent =
+            (probability * 100).toFixed(1) + "%";
+
+        $("liveTiming").textContent =
+            "Audio received through " +
+            result.audio_end_seconds + " seconds · " +
+            result.window_seconds + "-second window";
+
+        $("liveMeter").style.width =
+            (Math.max(0, Math.min(1, probability)) * 100) + "%";
+    }
+
+    async function startMicrophone() {
+        $("startMic").disabled = true;
+        $("micMessage").textContent =
+            "Requesting microphone permission...";
+
+        try {
+            microphoneStream =
+                await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                });
+
+            audioContext = new AudioContext();
+
+            await audioContext.resume();
+
+            const protocol =
+                location.protocol === "https:" ? "wss:" : "ws:";
+
+            websocket = new WebSocket(
+                protocol + "//" + location.host + "/live"
+            );
+
+            await new Promise((resolve, reject) => {
+                websocket.onopen = resolve;
+
+                websocket.onerror = () => {
+                    reject(new Error(
+                        "Could not connect to the WASP WebSocket."
+                    ));
+                };
+
+                websocket.onclose = () => {
+                    if (!isStopping) {
+                        $("micMessage").textContent =
+                            "WebSocket disconnected.";
+                    }
+                };
+            });
+
+            websocket.onmessage = (event) => {
+                try {
+                    showLiveResult(JSON.parse(event.data));
+                } catch {
+                    console.error("Invalid server response.");
+                }
+            };
+
+            microphoneSource =
+                audioContext.createMediaStreamSource(
+                    microphoneStream
+                );
+
+            // ScriptProcessorNode is deprecated but broadly
+            // supported and suitable for this simple prototype.
+            processor = audioContext.createScriptProcessor(
+                4096, 1, 1
+            );
+
+            // Prevent microphone monitoring feedback.
+            silentGain = audioContext.createGain();
+            silentGain.gain.value = 0;
+
+            processor.onaudioprocess = (event) => {
+                if (
+                    !websocket ||
+                    websocket.readyState !== WebSocket.OPEN
+                ) {
+                    return;
+                }
+
+                const input =
+                    event.inputBuffer.getChannelData(0);
+
+                appendAudioChunk(input);
+            };
+
+            microphoneSource.connect(processor);
+            processor.connect(silentGain);
+            silentGain.connect(audioContext.destination);
+
+            $("stopMic").disabled = false;
+            $("liveResult").classList.remove("hidden");
+
+            $("micMessage").textContent =
+                "Microphone active. Waiting for the first six-second window...";
+
+            setServerStatus("live", "Live monitoring active");
+
+        } catch (error) {
+            console.error(error);
+            $("micMessage").textContent =
+                "Could not start microphone: " + error.message;
+
+            await stopMicrophone();
+        } finally {
+            $("startMic").disabled = false;
+        }
+    }
+
+    async function stopMicrophone() {
+        isStopping = true;
+
+        if (processor) {
+            processor.disconnect();
+            processor.onaudioprocess = null;
+            processor = null;
+        }
+
+        if (microphoneSource) {
+            microphoneSource.disconnect();
+            microphoneSource = null;
+        }
+
+        if (silentGain) {
+            silentGain.disconnect();
+            silentGain = null;
+        }
+
+        if (websocket) {
+            websocket.onclose = null;
+
+            if (
+                websocket.readyState === WebSocket.OPEN ||
+                websocket.readyState === WebSocket.CONNECTING
+            ) {
+                websocket.close();
+            }
+
+            websocket = null;
+        }
+
+        if (microphoneStream) {
+            microphoneStream.getTracks().forEach(
+                track => track.stop()
+            );
+            microphoneStream = null;
+        }
+
+        if (audioContext) {
+            await audioContext.close();
+            audioContext = null;
+        }
+
+        pendingAudio = [];
+        pendingSamples = 0;
+
+        $("stopMic").disabled = true;
+        $("startMic").disabled = false;
+
+        $("micMessage").textContent = "Microphone is stopped.";
+
+        setServerStatus("ready", "Local server ready");
+
+        isStopping = false;
+    }
+
+    $("startMic").addEventListener(
+        "click", startMicrophone
+    );
+
+    $("stopMic").addEventListener(
+        "click", stopMicrophone
+    );
+
+
+    // ========================================================
+    // AUDIO FILE UPLOAD AND CLASSIFICATION
+    // ========================================================
+
+    $("uploadForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const file = $("audioFile").files[0];
+
+        if (!file) {
+            $("uploadMessage").textContent =
+                "Please choose an audio file.";
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("audio", file);
+
+        $("analyzeButton").disabled = true;
+        $("uploadMessage").textContent =
+            "Uploading and analyzing audio. Please wait...";
+
+        $("fileSummary").classList.add("hidden");
+        $("tableCard").classList.add("hidden");
+
+        try {
+            const response = await fetch("/classify", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || "Audio classification failed."
+                );
+            }
+
+            const distress =
+                data.overall_label === "distress";
+
+            $("fileSummary").className =
+                "result " + (distress ? "distress" : "normal");
+
+            $("fileOverallLabel").textContent = distress
+                ? "⚠️ Possible distress detected in recording"
+                : "✅ No distress windows detected";
+
+            $("fileSummaryText").textContent =
+                "Duration: " + data.duration_seconds + " seconds" +
+                " · Windows analyzed: " + data.total_windows +
+                " · Distress windows: " + data.distress_windows;
+
+            $("fileSummary").classList.remove("hidden");
+
+            const body = $("resultsBody");
+            body.replaceChildren();
+
+            data.predictions.forEach((item, index) => {
+                const row = document.createElement("tr");
+
+                const values = [
+                    index + 1,
+                    item.start_seconds + " s",
+                    item.end_seconds + " s"
+                ];
+
+                values.forEach(value => {
+                    const cell = document.createElement("td");
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                });
+
+                const labelCell = document.createElement("td");
+                const pill = document.createElement("span");
+
+                pill.className = "pill " + item.label;
+                pill.textContent = item.label.toUpperCase();
+
+                labelCell.appendChild(pill);
+                row.appendChild(labelCell);
+
+                const probabilityCell =
+                    document.createElement("td");
+
+                probabilityCell.textContent =
+                    (item.probability * 100).toFixed(2) + "%";
+
+                row.appendChild(probabilityCell);
+                body.appendChild(row);
+            });
+
+            $("tableCard").classList.remove("hidden");
+
+            $("uploadMessage").textContent =
+                "Analysis completed successfully.";
+
+        } catch (error) {
+            $("uploadMessage").textContent =
+                "Error: " + error.message;
+        } finally {
+            $("analyzeButton").disabled = false;
+        }
+    });
+</script>
+</body>
+</html>
